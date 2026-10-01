@@ -888,15 +888,10 @@ if not st.session_state["authenticated"]:
         with st.expander("ℹ️ Credenciais Iniciais de Administrador e Política de Senha", expanded=True):
             st.markdown(
                 """
-                - **Primeiro Acesso (Administrador Padrão):**
-                  - **Login:** `admin@gestao.jus.br` ou CPF `000.000.000-00`
-                  - **Senha Inicial:** `Admin@2026!`
-                  - *(Após efetuar login, o Administrador poderá alterar a senha e cadastrar novos usuários e administradores).*
-                - **Política Corporativa de Complexidade de Senhas:**
-                  - Mínimo de 8 caracteres.
-                  - Presença obrigatória de números (`0-9`).
-                  - Presença obrigatória de letras maiúsculas (`A-Z`) e minúsculas (`a-z`).
-                  - Presença obrigatória de caracteres especiais (`!@#$%^&*...`).
+                 - Mínimo de 8 caracteres.
+                 - Presença obrigatória de números (`0-9`).
+                 - Presença obrigatória de letras maiúsculas (`A-Z`) e minúsculas (`a-z`).
+                 - Presença obrigatória de caracteres especiais (`!@#$%^&*...`).
                 """
             )
 
