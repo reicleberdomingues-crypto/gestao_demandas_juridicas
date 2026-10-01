@@ -812,8 +812,136 @@ st.markdown(
 
 
 # ==========================================
-# BARRA LATERAL (SIDEBAR): FILTROS GLOBAIS
+# GESTÃO DE SESSÃO E AUTENTICAÇÃO CORPORATIVA
 # ==========================================
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "user_id" not in st.session_state:
+    st.session_state["user_id"] = None
+if "user_name" not in st.session_state:
+    st.session_state["user_name"] = None
+if "user_perfil" not in st.session_state:
+    st.session_state["user_perfil"] = None
+if "user_email" not in st.session_state:
+    st.session_state["user_email"] = None
+if "user_cpf" not in st.session_state:
+    st.session_state["user_cpf"] = None
+
+
+# ==========================================
+# TELA DE LOGIN (ACESSO RESTRITO POR E-MAIL / CPF E SENHA)
+# ==========================================
+if not st.session_state["authenticated"]:
+    # Assegura existência do Administrador padrão na inicialização
+    db.garantir_admin_padrao()
+
+    col_login_esq, col_login_centro, col_login_dir = st.columns([1, 1.8, 1])
+
+    with col_login_centro:
+        st.markdown(
+            """
+            <div style="text-align: center; margin-top: 1.5rem; margin-bottom: 1.5rem;">
+                <div style="font-size: 3.5rem; margin-bottom: 0.5rem;">⚖️</div>
+                <h2 style="color: #38BDF8; font-weight: 800; margin-bottom: 0.2rem; letter-spacing: -0.02em;">Portal de Gestão de Demandas Jurídicas</h2>
+                <p style="color: #94A3B8; font-size: 0.95rem; font-weight: 500;">Autenticação Corporativa Segura • Controle Estratégico e Operacional</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.form("form_login_corporativo", clear_on_submit=False):
+            st.markdown("#### 🔐 Acesso ao Sistema")
+            login_digitado = st.text_input(
+                "E-mail Institucional ou CPF:",
+                placeholder="Ex: admin@gestao.jus.br ou 000.000.000-00",
+                key="campo_login_usuario",
+            )
+            senha_digitada = st.text_input(
+                "Senha de Acesso:",
+                type="password",
+                placeholder="Digite sua senha cadastrada",
+                key="campo_login_senha",
+            )
+
+            st.markdown("<div style='margin-top: 0.6rem;'></div>", unsafe_allow_html=True)
+            btn_entrar = st.form_submit_button("Entrar no Sistema 🚀", type="primary", use_container_width=True)
+
+            if btn_entrar:
+                login_limpo = login_digitado.strip()
+                if not login_limpo or not senha_digitada:
+                    st.error("⚠️ Preencha o login (E-mail ou CPF) e a senha para acessar.")
+                else:
+                    sucesso_auth, dto_autenticado, msg_auth = db.autenticar_usuario(login_limpo, senha_digitada)
+                    if sucesso_auth and dto_autenticado:
+                        st.session_state["authenticated"] = True
+                        st.session_state["user_id"] = dto_autenticado.id
+                        st.session_state["user_name"] = dto_autenticado.nome_completo
+                        st.session_state["user_perfil"] = dto_autenticado.perfil
+                        st.session_state["user_email"] = dto_autenticado.email
+                        st.session_state["user_cpf"] = dto_autenticado.cpf
+                        st.success(f"Autenticação confirmada! Bem-vindo(a), {dto_autenticado.nome_completo}!")
+                        safe_rerun()
+                    else:
+                        st.error(f"❌ {msg_auth}")
+
+        # Informações de Primeiro Acesso e Política de Senhas
+        with st.expander("ℹ️ Credenciais Iniciais de Administrador e Política de Senha", expanded=True):
+            st.markdown(
+                """
+                - **Primeiro Acesso (Administrador Padrão):**
+                  - **Login:** `admin@gestao.jus.br` ou CPF `000.000.000-00`
+                  - **Senha Inicial:** `Admin@2026!`
+                  - *(Após efetuar login, o Administrador poderá alterar a senha e cadastrar novos usuários e administradores).*
+                - **Política Corporativa de Complexidade de Senhas:**
+                  - Mínimo de 8 caracteres.
+                  - Presença obrigatória de números (`0-9`).
+                  - Presença obrigatória de letras maiúsculas (`A-Z`) e minúsculas (`a-z`).
+                  - Presença obrigatória de caracteres especiais (`!@#$%^&*...`).
+                """
+            )
+
+    st.stop()
+
+
+# ==========================================
+# BARRA LATERAL (SIDEBAR): USUÁRIO E FILTROS GLOBAIS
+# ==========================================
+
+# Identificação do Usuário Conectado e Perfil
+usuario_nome = st.session_state.get("user_name", "Usuário")
+usuario_perfil = st.session_state.get("user_perfil", "Usuário")
+usuario_email = st.session_state.get("user_email", "")
+
+badge_cor = "#38BDF8" if usuario_perfil == "Administrador" else "#10B981"
+badge_icone = "🛡️" if usuario_perfil == "Administrador" else "👤"
+
+st.sidebar.markdown(
+    f"""
+    <div style="background-color: rgba(30, 41, 59, 0.7); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 10px; padding: 0.8rem 1rem; margin-bottom: 0.8rem;">
+        <div style="font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.05em; color: {badge_cor}; font-weight: 700; margin-bottom: 0.2rem;">
+            {badge_icone} {usuario_perfil}
+        </div>
+        <div style="color: #F8FAFC; font-weight: 700; font-size: 0.94rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            {usuario_nome}
+        </div>
+        <div style="color: #94A3B8; font-size: 0.78rem; margin-top: 0.1rem; word-break: break-all;">
+            {usuario_email}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+if st.sidebar.button("🚪 Sair do Sistema (Logout)", use_container_width=True, type="secondary"):
+    st.session_state["authenticated"] = False
+    st.session_state["user_id"] = None
+    st.session_state["user_name"] = None
+    st.session_state["user_perfil"] = None
+    st.session_state["user_email"] = None
+    st.session_state["user_cpf"] = None
+    safe_rerun()
+
+st.sidebar.divider()
 
 st.sidebar.markdown(
     """
@@ -891,13 +1019,25 @@ st.sidebar.caption(f"Lançamentos Ativos: **{total_ap_cont}** aportes • **{tot
 st.markdown('<div class="main-header">⚖️ Gestão Estratégica e Operacional de Demandas Jurídicas</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Controle de distribuição diária, mensuração de produtividade, acompanhamento de prazos e cálculo de KPIs/KGIs corporativos.</div>', unsafe_allow_html=True)
 
-# 4 Abas Principais
-tab_distribuicao, tab_gestao, tab_dashboard, tab_automacao = st.tabs([
-    "📥 Entrada e Distribuição Diária",
-    "⚖️ Gestão e Baixa de Demandas",
-    "📊 Painel Gerencial de Produtividade",
-    "⚙️ Automação e Integrações",
-])
+# Abas Condicionais por Perfil de Usuário
+is_admin = (st.session_state.get("user_perfil") == "Administrador")
+
+if is_admin:
+    tab_distribuicao, tab_gestao, tab_dashboard, tab_automacao, tab_usuarios = st.tabs([
+        "📥 Entrada e Distribuição Diária",
+        "⚖️ Gestão e Baixa de Demandas",
+        "📊 Painel Gerencial de Produtividade",
+        "⚙️ Automação e Integrações",
+        "👥 Gestão de Usuários e Acessos",
+    ])
+else:
+    tab_distribuicao, tab_gestao, tab_dashboard, tab_automacao = st.tabs([
+        "📥 Entrada e Distribuição Diária",
+        "⚖️ Gestão e Baixa de Demandas",
+        "📊 Painel Gerencial de Produtividade",
+        "⚙️ Automação e Integrações",
+    ])
+    tab_usuarios = None
 
 
 # ==============================================================================
@@ -1169,30 +1309,98 @@ with tab_distribuicao:
     with st.expander("ℹ️ Informação sobre a Distribuição Operacional"):
         st.info("💡 **Modelo Operacional Direto:** Para Obrigações de Fazer e Subsídios, os quantitativos são registrados diretamente por analista diário, eliminando a exigência de sorteio unitário de processos. Para Ações Mandamentais (MS/HC/HD), o controle por número de processo permanece integral.")
 
-    # Expander de Gestão Rápida da Equipe de Analistas
-    with st.expander("👤 Gerenciar Equipe de Analistas Jurídicos", expanded=df_analistas.empty):
-        col_an1, col_an2 = st.columns([1.5, 1])
-        with col_an1:
-            st.markdown("##### Analistas Cadastrados")
-            if not df_analistas.empty:
-                st.dataframe(df_analistas, use_container_width=True, hide_index=True)
-            else:
-                st.info("Nenhum analista cadastrado no banco. Utilize o formulário ao lado para cadastrar sua equipe.")
-        with col_an2:
-            st.markdown("##### Adicionar Novo Analista")
-            novo_nome = st.text_input("Nome do Analista", placeholder="Ex: Dr. Carlos Silva")
-            nova_esp = st.selectbox("Especialidade", options=["Obrigações/Subsídios", "Ações Mandamentais"])
-            novo_ativo = st.checkbox("Analista Ativo?", value=True)
-            if st.button("Adicionar Analista", type="primary", use_container_width=True):
-                if novo_nome.strip():
-                    db.add_analista(novo_nome.strip(), nova_esp, novo_ativo)
-                    st.success(f"Analista {novo_nome} adicionado com sucesso!")
-                    safe_rerun()
-                else:
-                    st.error("Informe o nome do analista.")
+    # Expander de Gestão Completa da Equipe de Analistas (Inserção, Alteração e Exclusão)
+    with st.expander("👤 Gerenciar Equipe de Analistas Jurídicos (Inserção, Alteração e Exclusão)", expanded=df_analistas.empty):
+        tab_an_list, tab_an_novo, tab_an_edit, tab_an_del = st.tabs([
+            "📋 Lista de Analistas",
+            "➕ Adicionar Novo Analista",
+            "✏️ Alterar Analista",
+            "🗑️ Excluir Analista",
+        ])
 
-            if df_analistas.empty:
-                st.info("ℹ️ Nenhum analista cadastrado no momento. Utilize o formulário acima para cadastrar os analistas da equipe.")
+        with tab_an_list:
+            st.markdown("##### Analistas Cadastrados na Equipe")
+            if not df_analistas.empty:
+                st.dataframe(
+                    df_analistas,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "id": st.column_config.NumberColumn("ID", width="small"),
+                        "nome": st.column_config.TextColumn("Nome Completo"),
+                        "especialidade": st.column_config.TextColumn("Especialidade"),
+                        "ativo": st.column_config.CheckboxColumn("Ativo?"),
+                    },
+                )
+            else:
+                st.info("Nenhum analista cadastrado no banco. Utilize a aba 'Adicionar Novo Analista' para cadastrar sua equipe.")
+
+        with tab_an_novo:
+            st.markdown("##### Cadastrar Novo Analista")
+            with st.form("form_add_analista_equipe", clear_on_submit=True):
+                novo_an_nome = st.text_input("Nome do Analista:", placeholder="Ex: Dr. Carlos Eduardo Silva")
+                nova_an_esp = st.selectbox("Especialidade:", options=["Obrigações/Subsídios", "Ações Mandamentais"])
+                novo_an_ativo = st.checkbox("Analista Ativo na Distribuição?", value=True)
+                btn_salvar_novo_an = st.form_submit_button("💾 Salvar Analista", type="primary", use_container_width=True)
+
+                if btn_salvar_novo_an:
+                    if novo_an_nome.strip():
+                        db.add_analista(novo_an_nome.strip(), nova_an_esp, novo_an_ativo)
+                        st.success(f"Analista '{novo_an_nome.strip()}' cadastrado com sucesso!")
+                        safe_rerun()
+                    else:
+                        st.error("Informe o nome do analista.")
+
+        with tab_an_edit:
+            st.markdown("##### Alterar Dados de Analista Existente")
+            todos_analistas = db.get_analistas(active_only=False)
+            if not todos_analistas:
+                st.info("Nenhum analista cadastrado para alteração.")
+            else:
+                opcoes_edit_an = {
+                    f"#{a.id} - {a.nome} ({a.especialidade}) {'[Ativo]' if a.ativo else '[Inativo]'}": a
+                    for a in todos_analistas
+                }
+                sel_edit_label = st.selectbox("Selecione o Analista para Editar:", options=list(opcoes_edit_an.keys()))
+                an_alvo = opcoes_edit_an[sel_edit_label]
+
+                with st.form(f"form_edit_an_{an_alvo.id}"):
+                    edit_nome = st.text_input("Nome Completo do Analista:", value=an_alvo.nome)
+                    idx_esp = 0 if an_alvo.especialidade == "Obrigações/Subsídios" else 1
+                    edit_esp = st.selectbox("Especialidade:", options=["Obrigações/Subsídios", "Ações Mandamentais"], index=idx_esp)
+                    edit_ativo = st.checkbox("Analista Ativo na Distribuição?", value=an_alvo.ativo)
+                    btn_salvar_ed_an = st.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True)
+
+                    if btn_salvar_ed_an:
+                        if edit_nome.strip():
+                            if db.update_analista(an_alvo.id, edit_nome.strip(), edit_esp, edit_ativo):
+                                st.success(f"Dados do analista '{edit_nome.strip()}' atualizados com sucesso!")
+                                safe_rerun()
+                            else:
+                                st.error("Erro ao atualizar analista.")
+                        else:
+                            st.error("O nome do analista não pode ficar vazio.")
+
+        with tab_an_del:
+            st.markdown("##### Excluir Analista da Equipe")
+            todos_analistas_del = db.get_analistas(active_only=False)
+            if not todos_analistas_del:
+                st.info("Nenhum analista disponível para exclusão.")
+            else:
+                opcoes_del_an = {
+                    f"#{a.id} - {a.nome} ({a.especialidade})": a.id
+                    for a in todos_analistas_del
+                }
+                sel_del_label = st.selectbox("Selecione o Analista para Excluir:", options=list(opcoes_del_an.keys()))
+                id_del_an = opcoes_del_an[sel_del_label]
+
+                st.warning("⚠️ Atenção: Ao excluir um analista, seus registros vinculados serão removidos.")
+                if st.button("Confirmar Exclusão do Analista Selecionado", type="secondary", key="btn_confirm_del_analista_op"):
+                    if db.delete_analista(id_del_an):
+                        st.success("Analista excluído com sucesso da equipe!")
+                        safe_rerun()
+                    else:
+                        st.error("Falha ao excluir o analista selecionado.")
 
 
 # ==============================================================================
@@ -2999,47 +3207,250 @@ with tab_automacao:
 
     # 3. FERRAMENTAS ADMINISTRATIVAS
     with sub_aut3:
-        st.markdown("#### 🛠️ Manutenção do Banco de Dados e Ambiente de Produção")
-        st.write("Controles administrativos para manutenção do banco de dados relacional SQLite em ambiente de produção.")
+        if st.session_state.get("user_perfil") != "Administrador":
+            st.markdown("#### 🔒 Acesso Restrito às Ferramentas Administrativas")
+            st.warning("⚠️ **Apenas usuários com perfil de Administrador têm permissão para acessar este módulo.**")
+            st.info("O seu perfil de acesso atual é **Usuário**. As ferramentas de reinicialização e manutenção de banco de dados são restritas exclusivamente a Administradores do sistema.")
+        else:
+            st.markdown("#### 🛠️ Manutenção do Banco de Dados e Ambiente de Produção")
+            st.write("Controles administrativos para manutenção do banco de dados relacional SQLite em ambiente de produção.")
 
-        col_adm1, col_adm2 = st.columns(2)
+            col_adm1, col_adm2 = st.columns(2)
 
-        with col_adm1:
-            st.markdown("##### 📊 Status do Ambiente de Produção")
-            tot_ap = safe_count_aportes()
-            tot_p = safe_count_produtividade()
-            tot_m = safe_count_mandamentais()
-            tot_a = safe_count_analistas()
-            st.markdown(f"""
-            - **Ambiente:** Produção (Ativo 🟢)
-            - **Banco de Dados:** SQLite (juridico.db - Modo WAL)
-            - **Total de Lançamentos de Aportes Diários:** `{tot_ap}`
-            - **Total de Lançamentos de Produtividade:** `{tot_p}`
-            - **Total de Ações Mandamentais:** `{tot_m}`
-            - **Total de Analistas na Equipe:** `{tot_a}`
-            """)
+            with col_adm1:
+                st.markdown("##### 📊 Status do Ambiente de Produção")
+                tot_ap = safe_count_aportes()
+                tot_p = safe_count_produtividade()
+                tot_m = safe_count_mandamentais()
+                tot_a = safe_count_analistas()
+                tot_u = db.get_total_usuarios_count() if hasattr(db, "get_total_usuarios_count") else 0
+                st.markdown(f"""
+                - **Ambiente:** Produção (Ativo 🟢)
+                - **Banco de Dados:** SQLite (juridico.db - Modo WAL)
+                - **Total de Lançamentos de Aportes Diários:** `{tot_ap}`
+                - **Total de Lançamentos de Produtividade:** `{tot_p}`
+                - **Total de Ações Mandamentais:** `{tot_m}`
+                - **Total de Analistas na Equipe:** `{tot_a}`
+                - **Total de Usuários Cadastrados:** `{tot_u}`
+                """)
 
-        with col_adm2:
-            st.markdown("##### 🗑️ Reinicialização Administrativa da Base")
-            st.caption("Caso necessite limpar todos os registros para reiniciar a operação, utilize a opção abaixo com cautela.")
-            with st.expander("⚠️ Opções de Limpeza de Dados"):
-                st.warning("Atenção: Esta ação remove os registros permanentemente.")
-                if st.button("Confirmar Limpeza de Todos os Registros", type="secondary", use_container_width=True):
-                    try:
-                        if hasattr(db, "clear_all_records"):
-                            res_del = db.clear_all_records(keep_analistas=False)
+            with col_adm2:
+                st.markdown("##### 🗑️ Reinicialização Administrativa da Base")
+                st.caption("Caso necessite limpar todos os registros operacionais para reiniciar a contagem, utilize a opção abaixo com cautela. Os usuários cadastrados e o acesso do Administrador são preservados.")
+                with st.expander("⚠️ Opções de Limpeza de Dados Operacionais"):
+                    st.warning("Atenção: Esta ação remove os registros operacionais permanentemente.")
+                    if st.button("Confirmar Limpeza de Registros Operacionais", type="secondary", use_container_width=True):
+                        try:
+                            if hasattr(db, "clear_all_records"):
+                                res_del = db.clear_all_records(keep_analistas=False, keep_usuarios=True)
+                            else:
+                                with db.get_db_session() as session:
+                                    if hasattr(db, "AporteDiario"):
+                                        session.query(db.AporteDiario).delete()
+                                    p_del = session.query(db.ProdutividadeOperacional).delete() if hasattr(db, "ProdutividadeOperacional") else 0
+                                    m_del = session.query(db.AcaoMandamental).delete() if hasattr(db, "AcaoMandamental") else 0
+                                    if hasattr(db, "DemandaOperacional"):
+                                        session.query(db.DemandaOperacional).delete()
+                                    if hasattr(db, "Analista"):
+                                        session.query(db.Analista).delete()
+                                    res_del = {'produtividade_operacional': p_del, 'acoes_mandamentais': m_del}
+                            st.success(f"Base operacional reiniciada com sucesso! ({res_del.get('produtividade_operacional', 0)} produtividades e {res_del.get('acoes_mandamentais', 0)} mandamentais removidos). Contas de usuários preservadas.")
+                            safe_rerun()
+                        except Exception as ex_del:
+                            st.error(f"Erro ao limpar banco: {ex_del}")
+
+
+# ==============================================================================
+# ABA 5: GESTÃO DE USUÁRIOS E ACESSOS (EXCLUSIVO PARA ADMINISTRADORES)
+# ==============================================================================
+if tab_usuarios is not None:
+    with tab_usuarios:
+        st.markdown("### 👥 Gestão Corporativa de Usuários e Perfis de Acesso")
+        st.caption("Controle exclusivo para Administradores: cadastro, edição, redefinição de senhas, ativação/desativação e exclusão de contas.")
+
+        sub_u1, sub_u2, sub_u3 = st.tabs([
+            "📋 Usuários Cadastrados",
+            "➕ Cadastrar Novo Usuário / Administrador",
+            "✏️ Alterar / Redefinir Senha / Excluir Usuário",
+        ])
+
+        with sub_u1:
+            st.markdown("#### 📋 Relação de Usuários Cadastrados")
+            df_users = db.get_df_usuarios()
+
+            col_kpi_u1, col_kpi_u2, col_kpi_u3, col_kpi_u4 = st.columns(4)
+            total_u_cad = len(df_users)
+            total_u_admin = len(df_users[df_users["perfil"] == "Administrador"]) if not df_users.empty else 0
+            total_u_comum = len(df_users[df_users["perfil"] == "Usuário"]) if not df_users.empty else 0
+            total_u_inat = len(df_users[~df_users["ativo"]]) if not df_users.empty else 0
+
+            with col_kpi_u1:
+                st.metric("Total de Contas", total_u_cad)
+            with col_kpi_u2:
+                st.metric("Administradores", total_u_admin)
+            with col_kpi_u3:
+                st.metric("Usuários Operacionais", total_u_comum)
+            with col_kpi_u4:
+                st.metric("Contas Inativas", total_u_inat)
+
+            st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+            if not df_users.empty:
+                st.dataframe(
+                    df_users,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "id": st.column_config.NumberColumn("ID", width="small"),
+                        "nome_completo": st.column_config.TextColumn("Nome Completo"),
+                        "cpf": st.column_config.TextColumn("CPF"),
+                        "email": st.column_config.TextColumn("E-mail"),
+                        "perfil": st.column_config.TextColumn("Perfil"),
+                        "ativo": st.column_config.CheckboxColumn("Ativo?"),
+                        "data_criacao": st.column_config.TextColumn("Data de Cadastro"),
+                        "ultimo_login": st.column_config.TextColumn("Último Acesso"),
+                    },
+                )
+            else:
+                st.info("Nenhum usuário cadastrado no momento.")
+
+        with sub_u2:
+            st.markdown("#### ➕ Cadastrar Novo Usuário ou Administrador")
+            st.caption("Preencha todos os campos obrigatórios. A senha deve cumprir estritamente a política de segurança.")
+
+            with st.form("form_cadastrar_novo_usuario", clear_on_submit=True):
+                col_cad_u1, col_cad_u2 = st.columns(2)
+                with col_cad_u1:
+                    novo_u_nome = st.text_input("Nome Completo:", placeholder="Ex: Dr. Roberto Guimarães")
+                    novo_u_cpf = st.text_input("CPF:", placeholder="000.000.000-00", help="11 dígitos numéricos com ou sem pontuação")
+                    novo_u_email = st.text_input("E-mail Institucional:", placeholder="roberto.guimaraes@gestao.jus.br")
+
+                with col_cad_u2:
+                    novo_u_perfil = st.selectbox(
+                        "Perfil de Acesso:",
+                        options=["Usuário", "Administrador"],
+                        help="Administrador: acesso completo ao sistema, usuários e manutenção. Usuário: acesso operacional (analistas, aportes diários, produtividade e dashboard)."
+                    )
+                    novo_u_senha = st.text_input(
+                        "Senha de Acesso:",
+                        type="password",
+                        placeholder="Mínimo 8 caracteres (maiúscula, minúscula, número e símbolo)",
+                        help="A senha deve conter pelo menos: 8 caracteres, 1 número, 1 letra maiúscula, 1 letra minúscula e 1 caractere especial (!@#$%...)"
+                    )
+                    novo_u_confirma_senha = st.text_input(
+                        "Confirmar Senha:",
+                        type="password",
+                        placeholder="Repita a senha informada",
+                    )
+
+                novo_u_ativo = st.checkbox("Conta Ativa Imediatamente?", value=True)
+
+                st.markdown(
+                    """
+                    <div style="font-size: 0.82rem; color: #94A3B8; margin-top: 0.5rem; margin-bottom: 0.8rem;">
+                        🔒 <b>Critérios Obrigatórios da Senha:</b> Mínimo de 8 caracteres • Ao menos 1 letra maiúscula • Ao menos 1 letra minúscula • Ao menos 1 número • Ao menos 1 caractere especial (!@#$%^&*...).
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                btn_salvar_novo_user = st.form_submit_button("💾 Salvar Usuário", type="primary", use_container_width=True)
+
+                if btn_salvar_novo_user:
+                    if not novo_u_nome.strip():
+                        st.error("Informe o nome completo do usuário.")
+                    elif not novo_u_cpf.strip():
+                        st.error("Informe o CPF do usuário.")
+                    elif not novo_u_email.strip():
+                        st.error("Informe o e-mail do usuário.")
+                    elif novo_u_senha != novo_u_confirma_senha:
+                        st.error("A confirmação de senha não confere com a senha digitada.")
+                    else:
+                        ok_add_u, msg_add_u, _ = db.add_usuario(
+                            nome_completo=novo_u_nome.strip(),
+                            cpf=novo_u_cpf.strip(),
+                            email=novo_u_email.strip(),
+                            senha=novo_u_senha,
+                            perfil=novo_u_perfil,
+                            ativo=novo_u_ativo,
+                        )
+                        if ok_add_u:
+                            st.success(f"✅ Usuário '{novo_u_nome.strip()}' cadastrado com sucesso como **{novo_u_perfil}**!")
+                            safe_rerun()
                         else:
-                            with db.get_db_session() as session:
-                                if hasattr(db, "AporteDiario"):
-                                    session.query(db.AporteDiario).delete()
-                                p_del = session.query(db.ProdutividadeOperacional).delete() if hasattr(db, "ProdutividadeOperacional") else 0
-                                m_del = session.query(db.AcaoMandamental).delete() if hasattr(db, "AcaoMandamental") else 0
-                                if hasattr(db, "DemandaOperacional"):
-                                    session.query(db.DemandaOperacional).delete()
-                                if hasattr(db, "Analista"):
-                                    session.query(db.Analista).delete()
-                                res_del = {'produtividade_operacional': p_del, 'acoes_mandamentais': m_del}
-                        st.success(f"Base de produção reiniciada com sucesso! ({res_del.get('produtividade_operacional', 0)} produtividades e {res_del.get('acoes_mandamentais', 0)} mandamentais removidos)")
-                        safe_rerun()
-                    except Exception as ex_del:
-                        st.error(f"Erro ao limpar banco: {ex_del}")
+                            st.error(f"❌ {msg_add_u}")
+
+        with sub_u3:
+            st.markdown("#### ✏️ Alterar Cadastro, Redefinir Senha ou Excluir Usuário")
+            todos_usuarios = db.get_all_usuarios()
+
+            if not todos_usuarios:
+                st.info("Nenhum usuário cadastrado para gerenciamento.")
+            else:
+                opcoes_gestao_u = {
+                    f"#{u.id} - {u.nome_completo} ({u.perfil}) | CPF: {u.cpf}": u
+                    for u in todos_usuarios
+                }
+                sel_gestao_label = st.selectbox("Selecione o Usuário para Gerenciar:", options=list(opcoes_gestao_u.keys()))
+                usuario_alvo = opcoes_gestao_u[sel_gestao_label]
+
+                col_ed_user1, col_ed_user2 = st.columns([1.5, 1])
+
+                with col_ed_user1:
+                    st.markdown("##### 📝 Editar Dados Cadastrais")
+                    with st.form(f"form_editar_usuario_{usuario_alvo.id}"):
+                        ed_u_nome = st.text_input("Nome Completo:", value=usuario_alvo.nome_completo)
+
+                        col_sub_ed1, col_sub_ed2 = st.columns(2)
+                        with col_sub_ed1:
+                            ed_u_cpf = st.text_input("CPF:", value=usuario_alvo.cpf)
+                        with col_sub_ed2:
+                            ed_u_email = st.text_input("E-mail Institucional:", value=usuario_alvo.email)
+
+                        col_sub_ed3, col_sub_ed4 = st.columns(2)
+                        with col_sub_ed3:
+                            idx_perfil_atual = 0 if usuario_alvo.perfil == "Usuário" else 1
+                            ed_u_perfil = st.selectbox("Perfil de Acesso:", options=["Usuário", "Administrador"], index=idx_perfil_atual)
+                        with col_sub_ed4:
+                            ed_u_ativo = st.checkbox("Conta Ativa?", value=usuario_alvo.ativo)
+
+                        st.markdown("###### 🔑 Redefinição de Senha (Opcional)")
+                        ed_u_nova_senha = st.text_input(
+                            "Nova Senha (preencha somente se desejar alterar a senha atual):",
+                            type="password",
+                            placeholder="Deixe em branco para manter a senha atual",
+                        )
+
+                        btn_salvar_ed_user = st.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True)
+
+                        if btn_salvar_ed_user:
+                            ok_upd, msg_upd = db.update_usuario(
+                                usuario_id=usuario_alvo.id,
+                                nome_completo=ed_u_nome.strip(),
+                                cpf=ed_u_cpf.strip(),
+                                email=ed_u_email.strip(),
+                                senha=ed_u_nova_senha if ed_u_nova_senha.strip() else None,
+                                perfil=ed_u_perfil,
+                                ativo=ed_u_ativo,
+                            )
+                            if ok_upd:
+                                st.success(f"✅ {msg_upd}")
+                                safe_rerun()
+                            else:
+                                st.error(f"❌ {msg_upd}")
+
+                with col_ed_user2:
+                    st.markdown("##### 🗑️ Exclusão de Conta")
+                    st.caption("A exclusão é definitiva. O sistema impede a autoexclusão do usuário conectado e protege o único administrador do sistema contra exclusão acidental.")
+
+                    with st.expander("⚠️ Confirmar Exclusão de Conta", expanded=False):
+                        st.warning(f"Confirma a exclusão definitiva do usuário **{usuario_alvo.nome_completo}**?")
+                        if st.button("Sim, Excluir Usuário", type="secondary", key=f"btn_del_usuario_conf_{usuario_alvo.id}", use_container_width=True):
+                            ok_del_u, msg_del_u = db.delete_usuario(
+                                usuario_id=usuario_alvo.id,
+                                requester_user_id=st.session_state.get("user_id"),
+                            )
+                            if ok_del_u:
+                                st.success(f"✅ {msg_del_u}")
+                                safe_rerun()
+                            else:
+                                st.error(f"❌ {msg_del_u}")

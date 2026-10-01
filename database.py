@@ -3,9 +3,12 @@ database.py - Camada de Persistência e Modelagem Relacional
 Sistema de Gestão Estratégica e Operacional de Demandas Jurídicas.
 """
 
+import hashlib
+import re
+import secrets
 from datetime import date, time, datetime
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from contextlib import contextmanager
 
 import pandas as pd
@@ -17,6 +20,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     Time,
+    DateTime,
     Text,
     ForeignKey,
     event,
@@ -115,6 +119,44 @@ class AnalistaDTO:
 
     def __repr__(self):
         return f"<AnalistaDTO(id={self.id}, nome='{self.nome}', especialidade='{self.especialidade}', ativo={self.ativo})>"
+
+
+class UsuarioDTO:
+    """Objeto de transferência de dados do Usuário 100% desacoplado da sessão ORM."""
+    def __init__(
+        self,
+        id: int,
+        nome_completo: str,
+        cpf: str,
+        email: str,
+        perfil: str,
+        ativo: bool,
+        data_criacao: Optional[datetime] = None,
+        ultimo_login: Optional[datetime] = None,
+    ):
+        self.id = int(id)
+        self.nome_completo = str(nome_completo)
+        self.cpf = str(cpf)
+        self.email = str(email)
+        self.perfil = str(perfil)
+        self.ativo = bool(ativo)
+        self.data_criacao = data_criacao
+        self.ultimo_login = ultimo_login
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "nome_completo": self.nome_completo,
+            "cpf": self.cpf,
+            "email": self.email,
+            "perfil": self.perfil,
+            "ativo": self.ativo,
+            "data_criacao": self.data_criacao.strftime("%d/%m/%Y %H:%M") if self.data_criacao else "-",
+            "ultimo_login": self.ultimo_login.strftime("%d/%m/%Y %H:%M") if self.ultimo_login else "Nunca",
+        }
+
+    def __repr__(self):
+        return f"<UsuarioDTO(id={self.id}, nome='{self.nome_completo}', perfil='{self.perfil}', email='{self.email}')>"
 
 
 # ==========================================
@@ -232,6 +274,34 @@ class ConfiguracaoSistema(Base):
     valor = Column(String(255), nullable=False)
 
 
+class Usuario(Base):
+    """Modelo relacional de usuários e administradores com autenticação segura."""
+    __tablename__ = "usuarios"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nome_completo = Column(String(200), nullable=False)
+    cpf = Column(String(14), unique=True, nullable=False, index=True)
+    email = Column(String(150), unique=True, nullable=False, index=True)
+    senha_hash = Column(String(256), nullable=False)
+    salt = Column(String(64), nullable=False)
+    perfil = Column(String(30), default="Usuário", nullable=False)  # "Administrador" ou "Usuário"
+    ativo = Column(Boolean, default=True, nullable=False)
+    data_criacao = Column(DateTime, default=datetime.now, nullable=False)
+    ultimo_login = Column(DateTime, nullable=True)
+
+    def to_dto(self) -> UsuarioDTO:
+        return UsuarioDTO(
+            id=self.id,
+            nome_completo=self.nome_completo,
+            cpf=self.cpf,
+            email=self.email,
+            perfil=self.perfil,
+            ativo=self.ativo,
+            data_criacao=self.data_criacao,
+            ultimo_login=self.ultimo_login,
+        )
+
+
 # ==========================================
 # INICIALIZAÇÃO DO BANCO (PRODUÇÃO)
 # ==========================================
@@ -246,11 +316,13 @@ def garantir_limpeza_producao() -> bool:
     Garante que no formato de produção, quaisquer registros de teste/demonstração
     anteriores sejam limpos uma única vez no deploy.
     Grava a flag 'modo_producao_ativo' para proteger todos os novos cadastros reais.
+    Garante a presença do Administrador padrão para acesso seguro ao sistema.
     """
     init_db()
     with get_db_session() as session:
         flag = session.query(ConfiguracaoSistema).filter(ConfiguracaoSistema.chave == "modo_producao_ativo").first()
         if flag and flag.valor == "sim":
+            garantir_admin_padrao()
             return False
 
         # Limpa dados legados/fictícios de teste
@@ -259,6 +331,7 @@ def garantir_limpeza_producao() -> bool:
         session.query(DemandaOperacional).delete()
         session.query(AcaoMandamental).delete()
         session.query(Analista).delete()
+        # Nota: Usuários são preservados
 
         if not flag:
             session.add(ConfiguracaoSistema(chave="modo_producao_ativo", valor="sim"))
@@ -268,6 +341,7 @@ def garantir_limpeza_producao() -> bool:
     with engine.connect() as conn:
         conn.execute(text("VACUUM;"))
 
+    garantir_admin_padrao()
     return True
 
 
@@ -443,6 +517,28 @@ def add_analista(nome: str, especialidade: str, ativo: bool = True) -> AnalistaD
         session.flush()
         dto = analista.to_dto()
         return dto
+
+
+def update_analista(analista_id: int, nome: str, especialidade: str, ativo: bool = True) -> bool:
+    """Atualiza o cadastro e especialidade de um analista existente."""
+    with get_db_session() as session:
+        analista = session.query(Analista).filter(Analista.id == int(analista_id)).first()
+        if not analista:
+            return False
+        analista.nome = nome.strip()
+        analista.especialidade = especialidade.strip()
+        analista.ativo = bool(ativo)
+        return True
+
+
+def delete_analista(analista_id: int) -> bool:
+    """Exclui um analista jurídico do banco de dados pelo ID."""
+    with get_db_session() as session:
+        analista = session.query(Analista).filter(Analista.id == int(analista_id)).first()
+        if not analista:
+            return False
+        session.delete(analista)
+        return True
 
 
 # ==========================================
@@ -939,10 +1035,11 @@ def get_df_analistas() -> pd.DataFrame:
     return df
 
 
-def clear_all_records(keep_analistas: bool = False) -> Dict[str, int]:
+def clear_all_records(keep_analistas: bool = False, keep_usuarios: bool = True) -> Dict[str, int]:
     """
     Remove todos os registros operacionais e mandamentais do banco de dados SQLite.
     Se keep_analistas for False, também remove o cadastro de analistas.
+    Se keep_usuarios for False, também remove usuários adicionais (recriando o admin padrão).
     Garante execução com schema 100% preservado e executa VACUUM.
     """
     contagem: Dict[str, int] = {}
@@ -956,7 +1053,374 @@ def clear_all_records(keep_analistas: bool = False) -> Dict[str, int]:
         else:
             contagem["analistas"] = 0
 
+        if not keep_usuarios:
+            contagem["usuarios"] = session.query(Usuario).delete()
+        else:
+            contagem["usuarios"] = 0
+
     with engine.connect() as conn:
         conn.execute(text("VACUUM;"))
 
+    garantir_admin_padrao()
     return contagem
+
+
+# ==========================================
+# UTILITÁRIOS DE SEGURANÇA, SENHA E CPF
+# ==========================================
+
+def limpar_cpf(cpf: str) -> str:
+    """Remove caracteres não numéricos do CPF."""
+    if not cpf:
+        return ""
+    return re.sub(r"\D", "", str(cpf))
+
+
+def formatar_cpf(cpf: str) -> str:
+    """Formata o CPF para o padrão 000.000.000-00 se possuir 11 dígitos."""
+    limpo = limpar_cpf(cpf)
+    if len(limpo) == 11:
+        return f"{limpo[:3]}.{limpo[3:6]}.{limpo[6:9]}-{limpo[9:]}"
+    return limpo
+
+
+def validar_cpf(cpf: str) -> Tuple[bool, str]:
+    """
+    Valida número de CPF conforme algoritmo oficial dos dois dígitos verificadores.
+    Permite o CPF do administrador de bootstrap '000.000.000-00'.
+    """
+    limpo = limpar_cpf(cpf)
+    if not limpo:
+        return False, "O CPF não pode estar vazio."
+    if limpo == "00000000000":
+        return True, ""
+    if len(limpo) != 11:
+        return False, "O CPF deve conter exatamente 11 dígitos numéricos."
+    if limpo == limpo[0] * 11:
+        return False, "CPF com todos os dígitos iguais é inválido."
+
+    # Primeiro dígito verificador
+    soma = sum(int(limpo[i]) * (10 - i) for i in range(9))
+    resto = (soma * 10) % 11
+    d1 = 0 if resto == 10 else resto
+    if d1 != int(limpo[9]):
+        return False, "Dígito verificador do CPF inválido."
+
+    # Segundo dígito verificador
+    soma = sum(int(limpo[i]) * (11 - i) for i in range(10))
+    resto = (soma * 10) % 11
+    d2 = 0 if resto == 10 else resto
+    if d2 != int(limpo[10]):
+        return False, "Dígito verificador do CPF inválido."
+
+    return True, ""
+
+
+def validar_complexidade_senha(senha: str) -> Tuple[bool, str]:
+    """
+    Valida a complexidade da senha conforme requisitos corporativos:
+    - Pelo menos 8 caracteres
+    - Letras maiúsculas (A-Z)
+    - Letras minúsculas (a-z)
+    - Números (0-9)
+    - Caracteres especiais (!@#$%^&*...)
+    """
+    if not senha or len(senha) < 8:
+        return False, "A senha deve conter no mínimo 8 caracteres."
+    if not re.search(r"[A-Z]", senha):
+        return False, "A senha deve conter ao menos uma letra maiúscula (A-Z)."
+    if not re.search(r"[a-z]", senha):
+        return False, "A senha deve conter ao menos uma letra minúscula (a-z)."
+    if not re.search(r"[0-9]", senha):
+        return False, "A senha deve conter ao menos um número (0-9)."
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{}|;:,.<>?/~`]", senha):
+        return False, "A senha deve conter ao menos um caractere especial (!@#$%^&*...)."
+    return True, ""
+
+
+def hash_senha(senha: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    """
+    Gera hash criptográfico seguro PBKDF2 HMAC SHA-256 com salt aleatório ou existente.
+    Retorna (hash_hex, salt_hex).
+    """
+    if not salt:
+        salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return key.hex(), salt
+
+
+def verificar_senha(senha: str, senha_hash: str, salt: str) -> bool:
+    """Verifica se a senha fornecida confere com o hash armazenado de forma constante no tempo."""
+    if not senha or not senha_hash or not salt:
+        return False
+    computed_hash, _ = hash_senha(senha, salt)
+    return secrets.compare_digest(computed_hash, senha_hash)
+
+
+# ==========================================
+# GESTÃO DE USUÁRIOS E AUTENTICAÇÃO
+# ==========================================
+
+def garantir_admin_padrao() -> UsuarioDTO:
+    """
+    Garante que exista pelo menos um Administrador cadastrado no banco de dados.
+    Caso não exista nenhum usuário com perfil 'Administrador', cria o administrador inicial:
+    - E-mail: admin@gestao.jus.br
+    - CPF: 000.000.000-00
+    - Senha: Admin@2026!
+    """
+    init_db()
+    with get_db_session() as session:
+        admin = session.query(Usuario).filter(Usuario.perfil == "Administrador").first()
+        if admin:
+            return admin.to_dto()
+
+        # Cria admin inicial padrão
+        salt = secrets.token_hex(16)
+        s_hash, _ = hash_senha("Admin@2026!", salt)
+        admin = Usuario(
+            nome_completo="Administrador do Sistema",
+            cpf="000.000.000-00",
+            email="admin@gestao.jus.br",
+            senha_hash=s_hash,
+            salt=salt,
+            perfil="Administrador",
+            ativo=True,
+            data_criacao=datetime.now(),
+        )
+        session.add(admin)
+        session.flush()
+        return admin.to_dto()
+
+
+def add_usuario(
+    nome_completo: str,
+    cpf: str,
+    email: str,
+    senha: str,
+    perfil: str = "Usuário",
+    ativo: bool = True,
+) -> Tuple[bool, str, Optional[UsuarioDTO]]:
+    """Cadastra um novo usuário ou administrador com validações estritas."""
+    nome = nome_completo.strip()
+    if len(nome) < 3:
+        return False, "O nome completo deve ter pelo menos 3 caracteres.", None
+
+    cpf_limpo = limpar_cpf(cpf)
+    ok_cpf, msg_cpf = validar_cpf(cpf_limpo)
+    if not ok_cpf:
+        return False, msg_cpf, None
+    cpf_fmt = formatar_cpf(cpf_limpo)
+
+    email_clean = email.strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_clean):
+        return False, "Formato de e-mail inválido.", None
+
+    ok_pwd, msg_pwd = validar_complexidade_senha(senha)
+    if not ok_pwd:
+        return False, msg_pwd, None
+
+    if perfil not in ("Administrador", "Usuário"):
+        perfil = "Usuário"
+
+    with get_db_session() as session:
+        # Verificar duplicidade de CPF ou E-mail
+        existente = session.query(Usuario).filter(
+            (Usuario.cpf == cpf_fmt) | (Usuario.email == email_clean)
+        ).first()
+        if existente:
+            if existente.cpf == cpf_fmt:
+                return False, f"Já existe um usuário cadastrado com o CPF {cpf_fmt}.", None
+            if existente.email == email_clean:
+                return False, f"Já existe um usuário cadastrado com o e-mail '{email_clean}'.", None
+
+        s_hash, salt = hash_senha(senha)
+        novo_user = Usuario(
+            nome_completo=nome,
+            cpf=cpf_fmt,
+            email=email_clean,
+            senha_hash=s_hash,
+            salt=salt,
+            perfil=perfil,
+            ativo=bool(ativo),
+            data_criacao=datetime.now(),
+        )
+        session.add(novo_user)
+        session.flush()
+        return True, "Usuário cadastrado com sucesso!", novo_user.to_dto()
+
+
+def update_usuario(
+    usuario_id: int,
+    nome_completo: Optional[str] = None,
+    cpf: Optional[str] = None,
+    email: Optional[str] = None,
+    senha: Optional[str] = None,
+    perfil: Optional[str] = None,
+    ativo: Optional[bool] = None,
+) -> Tuple[bool, str]:
+    """Atualiza dados do usuário, com validação de unicidade e complexidade de senha."""
+    with get_db_session() as session:
+        user = session.query(Usuario).filter(Usuario.id == int(usuario_id)).first()
+        if not user:
+            return False, "Usuário não localizado."
+
+        if nome_completo is not None:
+            nome = nome_completo.strip()
+            if len(nome) < 3:
+                return False, "O nome deve ter no mínimo 3 caracteres."
+            user.nome_completo = nome
+
+        if cpf is not None:
+            cpf_limpo = limpar_cpf(cpf)
+            ok_cpf, msg_cpf = validar_cpf(cpf_limpo)
+            if not ok_cpf:
+                return False, msg_cpf
+            cpf_fmt = formatar_cpf(cpf_limpo)
+            dup_cpf = session.query(Usuario).filter(Usuario.cpf == cpf_fmt, Usuario.id != user.id).first()
+            if dup_cpf:
+                return False, f"O CPF {cpf_fmt} já está cadastrado para outro usuário."
+            user.cpf = cpf_fmt
+
+        if email is not None:
+            em = email.strip().lower()
+            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", em):
+                return False, "Formato de e-mail inválido."
+            dup_email = session.query(Usuario).filter(Usuario.email == em, Usuario.id != user.id).first()
+            if dup_email:
+                return False, f"O e-mail '{em}' já está em uso por outro usuário."
+            user.email = em
+
+        if perfil is not None:
+            if perfil in ("Administrador", "Usuário"):
+                if user.perfil == "Administrador" and perfil == "Usuário":
+                    total_outros_admins = session.query(Usuario).filter(
+                        Usuario.perfil == "Administrador",
+                        Usuario.ativo.is_(True),
+                        Usuario.id != user.id
+                    ).count()
+                    if total_outros_admins == 0:
+                        return False, "Não é possível alterar o perfil do único administrador ativo do sistema."
+                user.perfil = perfil
+
+        if ativo is not None:
+            if user.perfil == "Administrador" and not ativo:
+                total_outros_admins = session.query(Usuario).filter(
+                    Usuario.perfil == "Administrador",
+                    Usuario.ativo.is_(True),
+                    Usuario.id != user.id
+                ).count()
+                if total_outros_admins == 0:
+                    return False, "Não é possível desativar o único administrador ativo do sistema."
+            user.ativo = bool(ativo)
+
+        if senha is not None and senha.strip():
+            ok_pwd, msg_pwd = validar_complexidade_senha(senha)
+            if not ok_pwd:
+                return False, msg_pwd
+            s_hash, salt = hash_senha(senha)
+            user.senha_hash = s_hash
+            user.salt = salt
+
+        return True, "Dados do usuário atualizados com sucesso!"
+
+
+def delete_usuario(usuario_id: int, requester_user_id: Optional[int] = None) -> Tuple[bool, str]:
+    """Exclui um usuário do sistema garantindo que não ocorra autoexclusão ou exclusão do último admin."""
+    with get_db_session() as session:
+        user = session.query(Usuario).filter(Usuario.id == int(usuario_id)).first()
+        if not user:
+            return False, "Usuário não encontrado."
+
+        if requester_user_id and user.id == int(requester_user_id):
+            return False, "Não é possível excluir o próprio usuário atualmente conectado."
+
+        if user.perfil == "Administrador":
+            outros_admins = session.query(Usuario).filter(
+                Usuario.perfil == "Administrador",
+                Usuario.ativo.is_(True),
+                Usuario.id != user.id
+            ).count()
+            if outros_admins == 0:
+                return False, "Não é possível excluir o único administrador ativo do sistema."
+
+        session.delete(user)
+        return True, f"Usuário '{user.nome_completo}' excluído com sucesso!"
+
+
+def get_df_usuarios() -> pd.DataFrame:
+    """Retorna DataFrame de usuários cadastrados para visualização gerencial."""
+    with engine.connect() as conn:
+        query = """
+            SELECT
+                id,
+                nome_completo,
+                cpf,
+                email,
+                perfil,
+                ativo,
+                data_criacao,
+                ultimo_login
+            FROM usuarios
+            ORDER BY nome_completo ASC
+        """
+        df = pd.read_sql_query(text(query), conn)
+
+    if not df.empty:
+        df["ativo"] = df["ativo"].astype(bool)
+        df["data_criacao"] = pd.to_datetime(df["data_criacao"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("-")
+        df["ultimo_login"] = pd.to_datetime(df["ultimo_login"], errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Nunca")
+    return df
+
+
+def get_all_usuarios() -> List[UsuarioDTO]:
+    """Retorna lista com todos os usuários cadastrados como DTOs desacoplados."""
+    with get_db_session() as session:
+        users = session.query(Usuario).order_by(Usuario.nome_completo.asc()).all()
+        return [u.to_dto() for u in users]
+
+
+def get_usuario_by_id(usuario_id: int) -> Optional[UsuarioDTO]:
+    """Recupera um usuário pelo ID."""
+    with get_db_session() as session:
+        user = session.query(Usuario).filter(Usuario.id == int(usuario_id)).first()
+        return user.to_dto() if user else None
+
+
+def get_total_usuarios_count() -> int:
+    """Retorna o número total de usuários cadastrados."""
+    with get_db_session() as session:
+        return session.query(Usuario).count()
+
+
+def autenticar_usuario(login_input: str, senha: str) -> Tuple[bool, Optional[UsuarioDTO], str]:
+    """
+    Autentica usuário pelo E-mail OU pelo CPF (formatado ou apenas dígitos).
+    Retorna (sucesso, usuario_dto, mensagem).
+    """
+    if not login_input or not senha:
+        return False, None, "Informe o login (E-mail ou CPF) e a senha."
+
+    identificador = login_input.strip()
+    cpf_limpo = limpar_cpf(identificador)
+    cpf_fmt = formatar_cpf(cpf_limpo) if len(cpf_limpo) == 11 else identificador
+
+    with get_db_session() as session:
+        user = session.query(Usuario).filter(
+            (Usuario.email == identificador.lower()) |
+            (Usuario.cpf == cpf_fmt) |
+            (Usuario.cpf == identificador)
+        ).first()
+
+        if not user:
+            return False, None, "Usuário não localizado. Verifique o e-mail ou CPF digitado."
+
+        if not user.ativo:
+            return False, None, "Esta conta de usuário está desativada. Contate o Administrador."
+
+        if not verificar_senha(senha, user.senha_hash, user.salt):
+            return False, None, "Senha incorreta. Tente novamente."
+
+        user.ultimo_login = datetime.now()
+        dto = user.to_dto()
+        return True, dto, "Autenticação realizada com sucesso!"
